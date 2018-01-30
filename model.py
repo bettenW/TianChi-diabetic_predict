@@ -53,55 +53,41 @@ def fuck_predict(category_X, category_y, test_X, train):
     pred_train_proba = category_model.predict_proba(train)
 
     return concat_X, concat_y, pred_proba, pred_train_proba 
-#进化初始模型
-#def fuck_predict(category_X, category_y, test_X, train):
+
+#进化初始模型,进行多种模型融合分类
+def fuck_predict_mix(category_X, category_y, test_X):
     
     # Cross validate model with Kfold stratified cross val
     kfold = StratifiedKFold(n_splits=10)
     
     # Modeling step Test differents algorithms 
     random_state = 2
-    # classifiers = []
     RFC_best = RandomForestClassifier(random_state=random_state)
     ExtC_best = ExtraTreesClassifier(random_state=random_state)
     GBC_best = GradientBoostingClassifier(random_state=random_state)
-
     mlp = MLPClassifier(random_state=random_state)
     knn = KNeighborsClassifier()
     ld = LinearDiscriminantAnalysis()
     lr = LogisticRegression()
-    
-    real_res = pd.read_csv('./data/d_answer_a_20180128.csv', encoding='gb2312')
-    real_label = pd.DataFrame()
-    real_label['label'] = 0
-    real_label['label'] = real_res['label']
-    real_label[real_label['label']<6.5]=0
-    real_label[real_label['label']>=6.5]=1
-    
+    #进行投票法
     votingC = VotingClassifier(estimators=[('rfc', RFC_best), ('extc', ExtC_best),
-                                           ('gbc',GBC_best), ('ld', ld), ('lr', lr)], voting='soft', n_jobs=4)
+                         ('gbc',GBC_best), ('mlp', mlp), ('knn', knn), ('ld', ld), ('lr', lr)], voting='soft', n_jobs=4)
     votingC = votingC.fit(category_X, category_y)
 
     # classifier.fit(category_X, category_y)
     pred_proba = votingC.predict_proba(test_X)
     pred_label= pd.Series(np.argmax(pred_proba,axis = 1))
     count = pred_label[pred_label==real_label['label']].count()
-    
-    print(count/1000)
 
     #拼接,将测试集预测出来的标签合并训练集标签, test_X合并category_X
     concat_y = category_y.append(pred_label,ignore_index =True )
     concat_X = category_X.append(test_X,ignore_index =True)
     #再次训练回归,并进行预测
-    #category_model.fit(concat_X,concat_y)
     pred_proba = votingC.predict_proba(test_X)
-    train = train.drop(['fuck'], axis=1)
-    pred_train_proba = votingC.predict_proba(train)
 
-    return concat_X, concat_y, pred_proba, pred_train_proba 
+    return concat_X, concat_y, pred_proba
 
 def fuck_columns(train, test, threshold):
-    #根据血糖值来划分数据集,阈值设为6.5
     fuck_columns=train.columns.tolist()
     if fuck_columns.__contains__('血糖'):
         fuck_columns.remove('血糖')
@@ -126,35 +112,29 @@ def fuck_columns(train, test, threshold):
     train = train.drop(['血糖'], axis=1)
     
     #训练test中fuck标签分类概率
-    concat_X, concat_y, pred_proba, pred_train_proba = fuck_predict(category_X, category_y, test_X, train)
+    concat_X, concat_y, pred_proba = fuck_predict(category_X, category_y, test_X)
 
     #将训练出来的fuck label当作特征放进去
     bigger_thr_X = pd.concat([bigger_thr_X, concat_y[bigger_thr_X.index]], axis = 1)
     less_thr_X = pd.concat([less_thr_X, concat_y[less_thr_X.index]], axis = 1)
 
     #测试集的拼接
-
     test_label = pd.DataFrame(concat_y[len(train):].reset_index())
     test_label.drop('index',axis = 1,inplace =True)
     test_concat = pd.concat([test_X,test_label],axis = 1)
     
-    #返回根据阈值划分好的两类训练集和血糖值, 测试集拼接血糖分类标签, 不带血糖和fuck的训练集, 测试集血糖概率, 训练集血糖概率
-    return bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat, train, pred_proba, pred_train_proba
+    #返回根据阈值划分好的两类训练集和血糖值, 测试集拼接血糖分类标签, 不带血糖和fuck的训练集, 测试集血糖概率
+    return bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat, train, pred_proba
 
 def linear_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat):
     linear_bigger = LinearRegression()
     linear_less = LinearRegression()
-    
-    #bigger_socre = mse_cv(linear_bigger, bigger_thr_X, bigger_thr_y)
-    #less_score = mse_cv(linear_bigger, less_thr_X, less_thr_y)
 
     linear_bigger.fit(bigger_thr_X,bigger_thr_y)
     linear_less.fit(less_thr_X,less_thr_y)
     
     pred_bigger = linear_bigger.predict(test_concat)
     pred_less = linear_less.predict(test_concat)
-   
-    #score = [bigger_socre.mean(), less_score.mean()]
 
     return pred_bigger, pred_less, linear_bigger, linear_less
 
@@ -167,7 +147,6 @@ def lasso_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)
 
     pred_bigger = lasso_bigger.predict(test_concat)
     pred_less = lasso_less.predict(test_concat)
-
 
     return pred_bigger, pred_less, lasso_bigger, lasso_less
 
@@ -260,12 +239,12 @@ def xgb_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat):
 def main():
     print("Reading in Data")
     #最终预测
-    # train = pd.read_csv('cleaned_train20180129_111517.csv')
-    # test = pd.read_csv('cleaned_test20180129_111517.csv')
+    train = pd.read_csv('cleaned_train20180129_111517.csv')
+    test = pd.read_csv('cleaned_test20180129_111517.csv')
 
     #验证A榜结果
-    train = pd.read_csv('cleaned_train20180129_102513.csv')
-    test = pd.read_csv('cleaned_test20180129_102513.csv')
+    #train = pd.read_csv('cleaned_train20180129_102513.csv')
+    #test = pd.read_csv('cleaned_test20180129_102513.csv')
     
     test = test.drop(['id'], axis=1)
     train = train.drop(['id'], axis=1)
@@ -275,92 +254,54 @@ def main():
     threshold = 6.5
     test_num = len(test)
     train_num = len(train)
-    bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat, X_train, pred_proba, pred_train_proba=fuck_columns(train, test, threshold)
+    bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat, X_train, pred_proba = fuck_columns(train, test, threshold)
     
 
     print("linear model 开始训练")
     pred_bigger, pred_less, linear_bigger, linear_less = linear_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    pred_train_bigger = linear_bigger.predict(X_train)
-    pred_train_less = linear_less.predict(X_train)
     #预测结果结合权重
-    linear_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     linear_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("linear model train mse score：",mse(y_train, linear_pred_train_res),'\n')
     
     print("lasso model 开始训练")
     pred_bigger, pred_less, lasso_bigger, lasso_less = lasso_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    pred_train_bigger = lasso_bigger.predict(X_train)
-    pred_train_less = lasso_less.predict(X_train)
     #预测结果结合权重
-    lasso_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     lasso_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("lasso model train mse score：",mse(y_train, lasso_pred_train_res),'\n')
     
     print("ENet model 开始训练")
     pred_bigger, pred_less, ENet_bigger, ENet_less = ENet_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    pred_train_bigger = ENet_bigger.predict(X_train)
-    pred_train_less = ENet_less.predict(X_train)
     #预测结果结合权重
-    ENet_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     ENet_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("ENet model train mse score：",mse(y_train, ENet_pred_train_res),'\n')
 
     print("集成模型开始训练...")
     print("RandomForestRegressor...")
     pred_bigger, pred_less, rf_bigger, rf_less = rf_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    pred_train_bigger = rf_bigger.predict(X_train)
-    pred_train_less = rf_less.predict(X_train)
     #预测结果结合权重
-    rf_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     rf_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("rf model train mse score：",mse(y_train, rf_pred_train_res),'\n')
 
     print("GradientBoostingRegressor...")
     pred_bigger, pred_less, gb_bigger, gb_less = GBoost_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    pred_train_bigger = gb_bigger.predict(X_train)
-    pred_train_less = gb_less.predict(X_train)
     #预测结果结合权重
-    gb_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     gb_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("gb model train mse score：",mse(y_train, gb_pred_train_res),'\n')
 
     print("LGBMRegressor...")
     pred_bigger, pred_less, lgb_bigger, lgb_less = LGBM_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    pred_train_bigger = lgb_bigger.predict(X_train)
-    pred_train_less = lgb_less.predict(X_train)
     #预测结果结合权重
-    lgb_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     lgb_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("lgb model train mse score：",mse(y_train, lgb_pred_train_res),'\n')
 
     print("XGBRegressor...")
     pred_bigger, pred_less, xgb_bigger, xgb_less = xgb_model(bigger_thr_X, bigger_thr_y, less_thr_X, less_thr_y, test_concat)   
-    #训练集
-    X_train.rename(columns={'fuck':0}, inplace = True)
-    pred_train_bigger = xgb_bigger.predict(X_train)
-    pred_train_less = xgb_less.predict(X_train)
     #预测结果结合权重
-    xgb_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     xgb_pred_res=np.array([pred_less[i]*pred_proba[i][0]+pred_bigger[i]*pred_proba[i][1] for i in range(test_num)])
-    print("xgb model train mse score：",mse(y_train, xgb_pred_train_res),'\n')
     
     '''
     Stacking Learning
     '''
     print("StackingRegressor...")
     stacked_averaged_bigger_models = StackingRegressor(
-        #regressors=[linear_bigger, lasso_bigger ,ENet_bigger ,rf_bigger],
         regressors=[linear_bigger, lasso_bigger ,ENet_bigger],
         meta_regressor= gb_bigger
     )
     stacked_averaged_less_models = StackingRegressor(
-        # regressors=[linear_less, lasso_less ,ENet_less ,rf_less],
         regressors=[linear_less, lasso_less ,ENet_less],
         meta_regressor= gb_less
     )
@@ -370,50 +311,17 @@ def main():
     #测试集预测
     stacked_bigger_pred = stacked_averaged_bigger_models.predict(test_concat)
     stacked_less_pred = stacked_averaged_less_models.predict(test_concat)
-    #训练集预测
-    X_train.rename(columns={0:'fuck'}, inplace = True)
-    pred_train_bigger = stacked_averaged_bigger_models.predict(X_train)
-    pred_train_less = stacked_averaged_less_models.predict(X_train)
     #预测结果结合权重
-    stacked_pred_train_res=np.array([pred_train_less[i]*pred_train_proba[i][0]+pred_train_bigger[i]*pred_train_proba[i][1] for i in range(train_num)])
     stacked_pred_res=np.array([stacked_less_pred[i]*pred_proba[i][0]+stacked_bigger_pred[i]*pred_proba[i][1] for i in range(test_num)])
-    print("StackingRegressor model train mse score：", mse(y_train, stacked_pred_train_res), '\n')
-    
-    ensemble_train = stacked_pred_train_res*0.30+xgb_pred_train_res*0.50+lgb_pred_train_res*0.20
-    print("Ensemble model train mse score：", mse(y_train, ensemble_train), '\n')
     
     ensemble = stacked_pred_res*0.40+xgb_pred_res*0.40+lgb_pred_res*0.20
     #stacking融合linear
     new_ensemble = np.array([linear_pred_res[i]*pred_proba[i][0]+ensemble[i]*pred_proba[i][1] for i in range(test_num)])
-    
-    #和a榜对比预测结果
-    answer_a = pd.read_csv("./data/d_answer_a_20180128.csv")
-    real_a = answer_a['label']
-    print("Ensemble  train mse score：", mse(real_a, ensemble))
-    print("new_Ensemble  train mse score：", mse(real_a, new_ensemble))
-    
-    # fuck=pd.DataFrame({'linear':linear_pred_res, 
-    #                    'lasso':lasso_pred_res, 
-    #                    'ENet':ENet_pred_res, 
-    #                    'rf':rf_pred_res, 
-    #                    'GBoost':gb_pred_res, 
-    #                    'LGBM':lgb_pred_res})
-    # fuck = pd.DataFrame({'1real_value':y_train ,
-    #                      'linear_train':linear_pred_train_res,
-    #                      'lasso_train':lasso_pred_train_res,                        
-    #                      'ENet_train':ENet_pred_train_res,
-    #                      'rf_train':rf_pred_train_res,
-    #                      'gb_train':gb_pred_train_res,
-    #                      'lgb_train':lgb_pred_train_res,
-    #                      'xgb_train':xgb_pred_train_res,
-    #                      'stack_train':stacked_pred_train_res,
-    #                      'Ensemble':ensemble_train})
-    # fuck.to_csv('merge_threshold='+str(threshold)+'withWeekDay_label.csv',index=False)
-
-    # sub = pd.DataFrame({'pred':ensemble})
-    # sub_wig = pd.DataFrame({'pred':new_ensemble})
-    # sub.to_csv('submission_b.csv', header=None, index=False)
-    # sub_wig.to_csv('submission_b_wig.csv', header=None, index=False)
+   
+    sub = pd.DataFrame({'pred':ensemble})
+    sub_wig = pd.DataFrame({'pred':new_ensemble})
+    sub.to_csv('submission_b.csv', header=None, index=False)
+    sub_wig.to_csv('submission_b_wig.csv', header=None, index=False)
 
 if __name__ == '__main__':
 	main()
